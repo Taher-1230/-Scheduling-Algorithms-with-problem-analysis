@@ -8,19 +8,19 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { algorithmOptions } from '../data/presets';
+import { ALGORITHMS } from '../engine/scheduler';
 
 function ComparisonChart({ allResults }) {
-  const data = algorithmOptions.map((option) => ({
-    name: option.label.replace(' Preemptive', ' P').replace(' Non-Preemptive', ' NP'),
-    waitingTime: allResults[option.key].averageWaitingTime,
-    turnaroundTime: allResults[option.key].averageTurnaroundTime,
+  const data = ALGORITHMS.map((algorithm) => ({
+    name: algorithm.label,
+    waitingTime: allResults?.[algorithm.key]?.averageWaitingTime ?? 0,
+    turnaroundTime: allResults?.[algorithm.key]?.averageTurnaroundTime ?? 0,
   }));
 
   return (
     <section className="glass rounded-[28px] p-6 shadow-glow">
       <p className="text-sm uppercase tracking-[0.28em] text-teal-600 dark:text-teal-300">Comparison</p>
-      <h2 className="mt-2 text-2xl font-bold">Average metric showdown</h2>
+      <h2 className="mt-2 text-2xl font-bold">Run the same workload across all schedulers</h2>
 
       <div className="mt-6 h-[360px] w-full">
         <ResponsiveContainer width="100%" height="100%">

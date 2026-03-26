@@ -1,66 +1,50 @@
-# CPU Scheduling Visualizer
+# Operating System Simulator Web App
 
-A modern React dashboard for exploring classic CPU scheduling algorithms with interactive process inputs, animated Gantt charts, and algorithm comparisons.
+A React-based OS simulator that runs a real discrete time-step engine instead of a static animation.
 
-## Tech Stack
+## What It Simulates
 
-- React with functional components and hooks
-- Tailwind CSS for styling
-- Recharts for comparison graphs
-- Pure frontend scheduling logic
+- Dynamic CPU scheduling with `FCFS`, `SJF Non-Preemptive`, `SJF Preemptive`, `Round Robin`, and `Priority`
+- Process states: `NEW`, `READY`, `RUNNING`, `WAITING`, and `TERMINATED`
+- Ready queue and waiting queue updates on every tick
+- Pause, resume, reset, and single-step execution
+- Real synchronization blocking and wake-up behavior
 
-## Features
+## Synchronization Modules
 
-- Dynamic process editor with add/remove controls
-- FCFS, SJF Non-Preemptive, SJF Preemptive (SRTF), Round Robin, Priority Non-Preemptive, and Priority Preemptive
-- Per-process CT, TAT, and WT calculations
-- Idle CPU handling and stable tie-breaking for same-arrival processes
-- Interactive Gantt chart with play/pause, step mode, and speed control
-- Comparison bar chart for average WT and TAT across all algorithms
-- Dark and light themes
-- Export dashboard as PNG or PDF
-
-## Getting Started
-
-1. Install dependencies:
-
-```bash
-npm install
-```
-
-2. Start the development server:
-
-```bash
-npm run dev
-```
-
-3. Build for production:
-
-```bash
-npm run build
-```
+- Producer Consumer with bounded buffer, mutex, and counting semaphores
+- Readers Writers with shared-reader and exclusive-writer behavior
+- Dining Philosophers with resource ordering to prevent deadlock
+- Critical Section with and without a mutex to demonstrate race conditions
 
 ## Project Structure
 
 ```text
 src/
   components/
+    Controls.jsx
+    GanttChart.jsx
+    QueueView.jsx
   data/
-  utils/
-  App.jsx
-  main.jsx
+    scenarios.js
+  engine/
+    processModel.js
+    scheduler.js
+    simulationEngine.js
+  sync/
+    mutex.js
+    semaphore.js
 ```
 
-## Scheduling Notes
+## Run Locally
 
-- `CT = Completion Time`
-- `TAT = CT - AT`
-- `WT = TAT - BT`
-- Lower priority numbers are treated as higher priority
-- Tie-breakers preserve earlier arrival time, then original input order
+```bash
+npm install
+npm run dev
+```
 
-## Bonus Support
+## Production Build
 
-- Step-by-step execution playback
-- Animation speed control
-- PNG and PDF export
+```bash
+npm run build
+```

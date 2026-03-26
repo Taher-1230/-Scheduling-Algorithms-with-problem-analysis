@@ -1,151 +1,182 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import html2canvas from 'html2canvas';
-import { jsPDF } from 'jspdf';
-import { Download, PlayCircle, RefreshCcw } from 'lucide-react';
-import AlgorithmSelector from './components/AlgorithmSelector';
-import ComparisonChart from './components/ComparisonChart';
-import GanttChart from './components/GanttChart';
-import InsightsPanel from './components/InsightsPanel';
-import MetricCard from './components/MetricCard';
-import ProcessForm from './components/ProcessForm';
-import ResultsTable from './components/ResultsTable';
 import ThemeToggle from './components/ThemeToggle';
-import { defaultProcesses } from './data/presets';
-import { buildColorMap, downloadBlob, validateProcesses } from './utils/helpers';
-import { runAlgorithm, runAllAlgorithms } from './utils/scheduling';
+import Controls from './components/Controls';
+import QueueView from './components/QueueView';
+import GanttChart from './components/GanttChart';
+import ComparisonChart from './components/ComparisonChart';
+import ProcessEditor from './components/ProcessEditor';
+import ResourcePanel from './components/ResourcePanel';
+import ProcessTable from './components/ProcessTable';
+import { ALGORITHMS } from './engine/scheduler';
+import { buildEngine, runScenarioComparison } from './engine/simulationEngine';
+import { createSchedulingScenario, defaultSchedulingProcesses, scenarioCatalog } from './data/scenarios';
 
-const createEmptyProcess = (index) => ({
+const PROCESS_COLORS = ['#06b6d4', '#22c55e', '#f97316', '#f43f5e', '#8b5cf6', '#eab308', '#14b8a6'];
+
+const buildColorMap = (rows) =>
+  rows.reduce(
+    (accumulator, row, index) => ({
+      ...accumulator,
+      [row.id]: PROCESS_COLORS[index % PROCESS_COLORS.length],
+    }),
+    { Idle: '#64748b' },
+  );
+
+const createProcess = (index) => ({
   id: `P${index + 1}`,
   arrivalTime: 0,
-  burstTime: 1,
+  burstTime: 3,
   priority: 1,
 });
 
+const validateSchedulingInput = (processes, timeQuantum) => {
+  for (const process of processes) {
+    if (!process.id?.trim()) {
+      return 'Every process needs a Process ID.';
+    }
+
+    if (Number(process.arrivalTime) < 0 || Number.isNaN(Number(process.arrivalTime))) {
+      return `Arrival time for ${process.id} must be 0 or greater.`;
+    }
+
+    if (Number(process.burstTime) <= 0 || Number.isNaN(Number(process.burstTime))) {
+      return `Burst time for ${process.id} must be greater than 0.`;
+    }
+  }
+
+  if (Number(timeQuantum) <= 0 || Number.isNaN(Number(timeQuantum))) {
+    return 'Time quantum must be greater than 0.';
+  }
+
+  return '';
+};
+
 function App() {
   const [darkMode, setDarkMode] = useState(true);
-  const [selectedAlgorithm, setSelectedAlgorithm] = useState('fcfs');
+  const [scenarioKey, setScenarioKey] = useState('scheduling');
+  const [algorithm, setAlgorithm] = useState('fcfs');
   const [timeQuantum, setTimeQuantum] = useState(2);
-  const [processes, setProcesses] = useState(defaultProcesses);
+  const [speed, setSpeed] = useState(500);
+  const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState('');
-  const [results, setResults] = useState(() => runAlgorithm('fcfs', defaultProcesses, 2));
-  const [allResults, setAllResults] = useState(() => runAllAlgorithms(defaultProcesses, 2));
-  const [playbackIndex, setPlaybackIndex] = useState(null);
-  const [speed, setSpeed] = useState(700);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const exportRef = useRef(null);
+  const [processInputs, setProcessInputs] = useState(defaultSchedulingProcesses);
+  const [snapshot, setSnapshot] = useState({
+    time: 0,
+    readyQueue: [],
+    waitingQueue: [],
+    currentProcessId: null,
+    gantt: [],
+    processes: [],
+    metrics: {
+      rows: [],
+      averageWaitingTime: 0,
+      averageTurnaroundTime: 0,
+    },
+    resources: {},
+    sharedState: {},
+    finished: false,
+  });
+  const [comparisonResults, setComparisonResults] = useState({});
+  const engineRef = useRef(null);
+
+  const hasStarted = snapshot.gantt.length > 0 || snapshot.time > 0 || snapshot.finished;
+  const selectedScenario = scenarioCatalog.find((scenario) => scenario.key === scenarioKey);
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', darkMode);
   }, [darkMode]);
 
-  useEffect(() => {
-    if (!isPlaying) {
-      return undefined;
+  const buildScenarioConfig = () => {
+    if (scenarioKey === 'scheduling') {
+      return createSchedulingScenario(processInputs);
     }
 
-    if (playbackIndex !== null && playbackIndex >= results.segments.length - 1) {
-      setIsPlaying(false);
+    return selectedScenario.build();
+  };
+
+  const resetSimulation = () => {
+    const nextError =
+      scenarioKey === 'scheduling' ? validateSchedulingInput(processInputs, timeQuantum) : '';
+
+    if (nextError) {
+      setError(nextError);
+      return false;
+    }
+
+    const scenarioConfig = buildScenarioConfig();
+    const engine = buildEngine(scenarioConfig, { algorithm, timeQuantum });
+    engineRef.current = engine;
+    setSnapshot(engine.getSnapshot());
+    setComparisonResults(runScenarioComparison(scenarioConfig, { algorithm, timeQuantum }));
+    setError('');
+    setIsRunning(false);
+    return true;
+  };
+
+  useEffect(() => {
+    if (!hasStarted) {
+      resetSimulation();
+    }
+  }, [scenarioKey, algorithm, timeQuantum, processInputs]);
+
+  useEffect(() => {
+    if (!isRunning) {
       return undefined;
     }
 
     const timer = window.setTimeout(() => {
-      setPlaybackIndex((previous) => {
-        if (previous === null) {
-          return 0;
-        }
+      if (!engineRef.current) {
+        return;
+      }
 
-        return Math.min(previous + 1, results.segments.length - 1);
-      });
+      const nextSnapshot = engineRef.current.tick();
+      setSnapshot(nextSnapshot);
+
+      if (nextSnapshot.finished) {
+        setIsRunning(false);
+      }
     }, speed);
 
     return () => window.clearTimeout(timer);
-  }, [isPlaying, playbackIndex, results.segments.length, speed]);
+  }, [isRunning, speed, snapshot.time]);
 
-  const colors = useMemo(() => buildColorMap(processes), [processes]);
+  const colors = useMemo(() => buildColorMap(snapshot.processes), [snapshot.processes]);
 
-  const handleProcessChange = (index, field, value) => {
-    setProcesses((current) =>
-      current.map((process, currentIndex) =>
-        currentIndex === index
-          ? {
-              ...process,
-              [field]: field === 'id' ? value : Number(value),
-            }
-          : process,
-      ),
-    );
+  const handleStart = () => {
+    if (!engineRef.current && !resetSimulation()) {
+      return;
+    }
+
+    if (snapshot.finished) {
+      if (!resetSimulation()) {
+        return;
+      }
+    }
+
+    setIsRunning(true);
   };
 
-  const handleAddProcess = () => {
-    setProcesses((current) => [...current, createEmptyProcess(current.length)]);
+  const handlePause = () => {
+    setIsRunning(false);
   };
 
-  const handleRemoveProcess = (index) => {
-    setProcesses((current) => current.filter((_, currentIndex) => currentIndex !== index));
+  const handleStep = () => {
+    if (!engineRef.current && !resetSimulation()) {
+      return;
+    }
+
+    setIsRunning(false);
+    const nextSnapshot = engineRef.current.tick();
+    setSnapshot(nextSnapshot);
   };
 
   const handleReset = () => {
-    setProcesses(defaultProcesses);
-    setTimeQuantum(2);
-    setSelectedAlgorithm('fcfs');
-    setError('');
-    setResults(runAlgorithm('fcfs', defaultProcesses, 2));
-    setAllResults(runAllAlgorithms(defaultProcesses, 2));
-    setPlaybackIndex(null);
-    setIsPlaying(false);
+    resetSimulation();
   };
 
-  const handleRunSimulation = () => {
-    const validationError = validateProcesses(processes, selectedAlgorithm, timeQuantum);
-
-    if (validationError) {
-      setError(validationError);
-      return;
-    }
-
-    setResults(runAlgorithm(selectedAlgorithm, processes, timeQuantum));
-    setAllResults(runAllAlgorithms(processes, timeQuantum));
-    setPlaybackIndex(null);
-    setIsPlaying(false);
-    setError('');
-  };
-
-  const handleExportImage = async () => {
-    if (!exportRef.current) {
-      return;
-    }
-
-    const canvas = await html2canvas(exportRef.current, {
-      backgroundColor: null,
-      scale: 2,
-    });
-
-    canvas.toBlob((blob) => {
-      if (blob) {
-        downloadBlob(blob, 'cpu-scheduling-dashboard.png');
-      }
-    });
-  };
-
-  const handleExportPdf = async () => {
-    if (!exportRef.current) {
-      return;
-    }
-
-    const canvas = await html2canvas(exportRef.current, {
-      backgroundColor: '#020617',
-      scale: 2,
-    });
-    const imageData = canvas.toDataURL('image/png');
-    const pdf = new jsPDF({
-      orientation: canvas.width > canvas.height ? 'landscape' : 'portrait',
-      unit: 'px',
-      format: [canvas.width, canvas.height],
-    });
-
-    pdf.addImage(imageData, 'PNG', 0, 0, canvas.width, canvas.height);
-    pdf.save('cpu-scheduling-report.pdf');
-  };
+  const metrics = snapshot.metrics;
+  const sharedCounter = snapshot.sharedState.counter;
+  const bufferSize = snapshot.sharedState.buffer?.length;
 
   return (
     <div className="relative overflow-hidden">
@@ -153,36 +184,18 @@ function App() {
 
       <main className="relative mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         <header className="glass rounded-[32px] p-6 shadow-glow">
-          <div className="flex flex-col gap-8 xl:flex-row xl:items-center xl:justify-between">
-            <div className="max-w-3xl">
-              <p className="text-sm uppercase tracking-[0.32em] text-teal-600 dark:text-teal-300">CPU Scheduling Visualizer</p>
+          <div className="flex flex-col gap-8 xl:flex-row xl:items-start xl:justify-between">
+            <div className="max-w-4xl">
+              <p className="text-sm uppercase tracking-[0.32em] text-teal-600 dark:text-teal-300">Operating System Simulator</p>
               <h1 className="mt-3 text-4xl font-bold tracking-tight sm:text-5xl">
-                Explore fairness, latency, and throughput with a live scheduling lab.
+                A discrete-time OS lab for scheduling, blocking, synchronization, and recovery.
               </h1>
-              <p className="mt-4 max-w-2xl text-base leading-7 text-slate-600 dark:text-slate-300">
-                Simulate classic CPU scheduling algorithms, inspect every execution slice, compare averages side by side, and export the dashboard as an image or PDF.
+              <p className="mt-4 max-w-3xl text-base leading-7 text-slate-600 dark:text-slate-300">
+                Every tick moves arrivals into queues, lets the scheduler choose a runnable process, executes one CPU unit, applies mutex or semaphore rules, and updates READY, WAITING, RUNNING, and TERMINATED states in real time.
               </p>
             </div>
 
-            <div className="flex flex-col gap-3 sm:flex-row xl:flex-col">
-              <ThemeToggle darkMode={darkMode} onToggle={() => setDarkMode((current) => !current)} />
-              <button
-                type="button"
-                onClick={handleRunSimulation}
-                className="inline-flex items-center justify-center gap-2 rounded-full bg-teal-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-teal-500"
-              >
-                <PlayCircle size={18} />
-                Run Simulation
-              </button>
-              <button
-                type="button"
-                onClick={handleReset}
-                className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-300 px-5 py-3 text-sm font-semibold text-slate-700 transition hover:border-teal-500 hover:text-teal-600 dark:border-slate-700 dark:text-slate-200 dark:hover:border-teal-400 dark:hover:text-teal-300"
-              >
-                <RefreshCcw size={16} />
-                Reset Data
-              </button>
-            </div>
+            <ThemeToggle darkMode={darkMode} onToggle={() => setDarkMode((current) => !current)} />
           </div>
         </header>
 
@@ -192,83 +205,144 @@ function App() {
           </div>
         ) : null}
 
-        <div className="mt-8 grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
-          <ProcessForm
-            processes={processes}
-            selectedAlgorithm={selectedAlgorithm}
-            timeQuantum={timeQuantum}
-            onProcessChange={handleProcessChange}
-            onAddProcess={handleAddProcess}
-            onRemoveProcess={handleRemoveProcess}
-            onQuantumChange={(value) => setTimeQuantum(Number(value))}
-            onLoadSample={() => setProcesses(defaultProcesses)}
-          />
-          <AlgorithmSelector selectedAlgorithm={selectedAlgorithm} onChange={setSelectedAlgorithm} />
-        </div>
-
-        <div ref={exportRef} className="mt-8 space-y-6">
-          <section className="grid gap-4 md:grid-cols-3">
-            <MetricCard label="Average Waiting Time" value={results.averageWaitingTime} accent="#14b8a6" />
-            <MetricCard label="Average Turnaround Time" value={results.averageTurnaroundTime} accent="#f97316" />
-            <MetricCard label="Execution Slices" value={results.segments.length} accent="#06b6d4" />
-          </section>
-
-          <GanttChart
-            segments={results.segments}
-            colors={colors}
-            playbackIndex={playbackIndex}
-            speed={speed}
-            onSpeedChange={setSpeed}
-            onStep={() =>
-              setPlaybackIndex((current) => {
-                if (current === null) {
-                  return 0;
-                }
-
-                return Math.min(current + 1, results.segments.length - 1);
-              })
-            }
-            onPlayToggle={() => {
-              setPlaybackIndex((current) => current ?? 0);
-              setIsPlaying((current) => !current);
-            }}
-            isPlaying={isPlaying}
-          />
-
-          <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
-            <ResultsTable results={results} />
-            <InsightsPanel selectedAlgorithm={selectedAlgorithm} results={results} />
+        <section className="mt-8 grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+          <div className="glass rounded-[28px] p-5 shadow-glow">
+            <p className="text-sm uppercase tracking-[0.28em] text-teal-600 dark:text-teal-300">Scenario</p>
+            <h2 className="mt-2 text-2xl font-bold">Choose the operating system problem</h2>
+            <div className="mt-5 grid gap-3 md:grid-cols-2">
+              {scenarioCatalog.map((scenario) => (
+                <button
+                  key={scenario.key}
+                  type="button"
+                  disabled={hasStarted}
+                  onClick={() => setScenarioKey(scenario.key)}
+                  className={`rounded-3xl border px-4 py-4 text-left transition ${
+                    scenario.key === scenarioKey
+                      ? 'border-teal-500 bg-teal-500/10 text-slate-900 dark:text-white'
+                      : 'border-slate-200/70 text-slate-600 hover:border-teal-400 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:text-white'
+                  }`}
+                >
+                  <div className="text-sm font-semibold">{scenario.label}</div>
+                </button>
+              ))}
+            </div>
+            <p className="mt-4 text-sm leading-6 text-slate-600 dark:text-slate-300">
+              {selectedScenario?.description}
+            </p>
           </div>
 
-          <ComparisonChart allResults={allResults} />
-        </div>
+          <div className="glass rounded-[28px] p-5 shadow-glow">
+            <p className="text-sm uppercase tracking-[0.28em] text-teal-600 dark:text-teal-300">Scheduler</p>
+            <h2 className="mt-2 text-2xl font-bold">Pick the dispatch strategy</h2>
+            <div className="mt-5 grid gap-3">
+              {ALGORITHMS.map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  disabled={hasStarted}
+                  onClick={() => setAlgorithm(item.key)}
+                  className={`rounded-3xl border px-4 py-4 text-left transition ${
+                    item.key === algorithm
+                      ? 'border-teal-500 bg-teal-500/10 text-slate-900 dark:text-white'
+                      : 'border-slate-200/70 text-slate-600 hover:border-teal-400 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:text-white'
+                  }`}
+                >
+                  <div className="text-sm font-semibold">{item.label}</div>
+                </button>
+              ))}
+            </div>
 
-        <section className="mt-8 glass rounded-[28px] p-6 shadow-glow">
-          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-            <div>
-              <p className="text-sm uppercase tracking-[0.28em] text-teal-600 dark:text-teal-300">Export</p>
-              <h2 className="mt-2 text-2xl font-bold">Share the simulation</h2>
-            </div>
-            <div className="flex flex-wrap gap-3">
-              <button
-                type="button"
-                onClick={handleExportImage}
-                className="inline-flex items-center gap-2 rounded-full border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-teal-500 hover:text-teal-600 dark:border-slate-700 dark:text-slate-200 dark:hover:border-teal-400 dark:hover:text-teal-300"
-              >
-                <Download size={16} />
-                Export PNG
-              </button>
-              <button
-                type="button"
-                onClick={handleExportPdf}
-                className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-700 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200"
-              >
-                <Download size={16} />
-                Export PDF
-              </button>
-            </div>
+            <label className="mt-5 block text-sm text-slate-600 dark:text-slate-300">
+              Round Robin quantum
+              <input
+                type="number"
+                min="1"
+                disabled={hasStarted}
+                value={timeQuantum}
+                onChange={(event) => setTimeQuantum(Number(event.target.value))}
+                className="mt-3 w-full rounded-2xl border border-slate-200 bg-white/80 px-3 py-2 outline-none transition focus:border-teal-500 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900/70"
+              />
+            </label>
           </div>
         </section>
+
+        {scenarioKey === 'scheduling' ? (
+          <div className="mt-8">
+            <ProcessEditor
+              processes={processInputs}
+              disabled={hasStarted}
+              onAdd={() => setProcessInputs((current) => [...current, createProcess(current.length)])}
+              onRemove={(index) =>
+                setProcessInputs((current) =>
+                  current.length === 1 ? current : current.filter((_, currentIndex) => currentIndex !== index),
+                )
+              }
+              onChange={(index, field, value) =>
+                setProcessInputs((current) =>
+                  current.map((process, currentIndex) =>
+                    currentIndex === index ? { ...process, [field]: value } : process,
+                  ),
+                )
+              }
+            />
+          </div>
+        ) : null}
+
+        <div className="mt-8 grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
+          <Controls
+            isRunning={isRunning}
+            onStart={handleStart}
+            onPause={handlePause}
+            onStep={handleStep}
+            onReset={handleReset}
+            speed={speed}
+            onSpeedChange={setSpeed}
+            disabled={snapshot.finished}
+          />
+          <QueueView
+            currentProcessId={snapshot.currentProcessId}
+            readyQueue={snapshot.readyQueue}
+            waitingQueue={snapshot.waitingQueue}
+          />
+        </div>
+
+        <section className="mt-8 grid gap-4 md:grid-cols-4">
+          <div className="glass rounded-3xl p-5 shadow-glow">
+            <p className="text-sm uppercase tracking-[0.22em] text-slate-500 dark:text-slate-400">Current Time</p>
+            <p className="mt-3 text-3xl font-bold">{snapshot.time}</p>
+          </div>
+          <div className="glass rounded-3xl p-5 shadow-glow">
+            <p className="text-sm uppercase tracking-[0.22em] text-slate-500 dark:text-slate-400">Avg Waiting Time</p>
+            <p className="mt-3 text-3xl font-bold">{metrics.averageWaitingTime}</p>
+          </div>
+          <div className="glass rounded-3xl p-5 shadow-glow">
+            <p className="text-sm uppercase tracking-[0.22em] text-slate-500 dark:text-slate-400">Avg Turnaround Time</p>
+            <p className="mt-3 text-3xl font-bold">{metrics.averageTurnaroundTime}</p>
+          </div>
+          <div className="glass rounded-3xl p-5 shadow-glow">
+            <p className="text-sm uppercase tracking-[0.22em] text-slate-500 dark:text-slate-400">Shared Focus</p>
+            <p className="mt-3 text-lg font-bold">
+              {typeof sharedCounter === 'number'
+                ? `counter = ${sharedCounter}`
+                : typeof bufferSize === 'number'
+                  ? `buffer = ${bufferSize}`
+                  : snapshot.currentProcessId ?? 'Idle'}
+            </p>
+          </div>
+        </section>
+
+        <div className="mt-8">
+          <GanttChart timeline={snapshot.gantt} colors={colors} currentTime={snapshot.time} />
+        </div>
+
+        <div className="mt-8 grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+          <ProcessTable rows={snapshot.processes} />
+          <ResourcePanel resources={snapshot.resources} sharedState={snapshot.sharedState} />
+        </div>
+
+        <div className="mt-8">
+          <ComparisonChart allResults={comparisonResults} />
+        </div>
       </main>
     </div>
   );
