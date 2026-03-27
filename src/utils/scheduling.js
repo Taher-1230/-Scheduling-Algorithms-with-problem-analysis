@@ -1,4 +1,4 @@
-import { normalizeProcesses, roundNumber } from './helpers';
+import { normalizeProcesses, roundNumber } from './helpers.js';
 
 const compareByArrival = (left, right) =>
   left.arrivalTime - right.arrivalTime || left.order - right.order;

@@ -1,7 +1,7 @@
-import { ALGORITHMS, isPreemptive, selectNextProcessId, shouldKeepRunning, shouldRotateRoundRobin } from './scheduler';
-import { ProcessModel, PROCESS_STATES } from './processModel';
-import { Mutex } from '../sync/mutex';
-import { BinarySemaphore, ReaderWriterLock, Semaphore } from '../sync/semaphore';
+import { ALGORITHMS, isPreemptive, selectNextProcessId, shouldKeepRunning, shouldRotateRoundRobin } from './scheduler.js';
+import { ProcessModel, PROCESS_STATES } from './processModel.js';
+import { Mutex } from '../sync/mutex.js';
+import { BinarySemaphore, ReaderWriterLock, Semaphore } from '../sync/semaphore.js';
 
 const MAX_TICKS = 500;
 
